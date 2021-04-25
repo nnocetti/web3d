@@ -1,0 +1,20 @@
+version: "3.4"
+
+# Utilizamos la variable DOCKER_CONTAINER para definir el host de la BD mysql.
+# En produccion el host de la base de datos es localhost, en un contenedor es el nombre del contenedor (mysql)
+
+x-alias: 
+  - static: &static ..\app
+
+services:
+  web:
+    image: nginx:latest
+    #command: [nginx-debug, '-g', 'daemon off;']
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+#      - .\nginx_conf\default.conf:/etc/nginx/templates/default.conf
+      - type: bind
+        source: *static
+        target: /usr/share/nginx/html
