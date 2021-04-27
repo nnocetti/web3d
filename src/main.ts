@@ -8,12 +8,17 @@ const spaceWidth = 200;
 const spaceHeight = 200;
 const spaceDepth = 200;
 
+const constantG = 1;
+
 class Program
 {
     static scene: THREE.Scene;
     static camera: THREE.PerspectiveCamera;
     static renderer: THREE.WebGLRenderer;
     static controls: OrbitControls;
+
+    static elapsedTime: number = 0;
+    static objects: Object[] = [];
 
     public static init(): void {
         this.scene = new THREE.Scene();
@@ -43,7 +48,6 @@ class Program
         this.camera.position.y = spaceHeight/2;
         this.camera.position.z = spaceDepth + 100;
 
-        let objects: Object[] = [];
         let obj: Object;
         let position: Vector;
         let color: string;
@@ -59,28 +63,98 @@ class Program
 
             radio = Math.ceil(Math.random() * 5);
 
-            obj = new Object(position, color, radio);
+            obj = new Object(position, color, radio, radio);
 
             this.scene.add(obj.figure);
 
-            objects.push(obj);
+            this.objects.push(obj);
+            //console.log('positon: ', obj.position);
+            //console.log('velocity: ', obj.velocity);
         }
 
-        const animate = function(time: number) {
-            //time *= 0.001;  // convert time to seconds
+        requestAnimationFrame(this.timeFrame.bind(this));
+    }
 
-            that.renderer.render(that.scene, that.camera);
 
-            objects.forEach(obj => {
-                obj.move(time);
-                obj.figure.rotation.x = time;
-                obj.figure.rotation.y = time;
-            });
+    static timeFrame(updatedTime: number): void {
+        let dTime = (updatedTime - this.elapsedTime) * 0.001;
+        this.elapsedTime = updatedTime;
 
-            requestAnimationFrame(animate);
+        this.renderer.render(this.scene, this.camera);
+        //alert('stop!');
+
+        let gForces: {[key: string]: Vector} = {};
+
+        for (let i = 0; i < this.objects.length; i++) {
+            //Calcular fuerza
+            let iObj = this.objects[i];
+            let totalForce = {x:0, y:0, z:0};
+
+            for (let j = 0; j < this.objects.length; j++) {
+                if (i != j) {
+                    if (!gForces[`${j}${i}`]) {
+                        let jObj = this.objects[j];
+
+                        let dx = jObj.position.x - iObj.position.x;
+                        let dy = jObj.position.y - iObj.position.y;
+                        let dz = jObj.position.z - iObj.position.z;
+    
+                        let r2 = (
+                            Math.pow(dx, 2) +
+                            Math.pow(dy, 2) +
+                            Math.pow(dz, 2)
+                        );
+    
+                        let forceMag = (constantG*this.objects[i].mass*this.objects[j].mass)/r2;
+    
+                        // Este resultado hay que guardarlo, es el mismo para ij y para ji
+                        let ijForce = {x: dx*forceMag, y: dy*forceMag, z: dz*forceMag}
+
+                        totalForce.x += ijForce.x;
+                        totalForce.y += ijForce.y;
+                        totalForce.z += ijForce.z;
+
+                        gForces[`${i}${j}`] = {x: ijForce.x, y: ijForce.y, z: ijForce.z};
+                    }
+                    else {
+                        let jiForce = gForces[`${j}${i}`];
+                        totalForce.x += -jiForce.x;
+                        totalForce.y += -jiForce.y;
+                        totalForce.z += -jiForce.z;
+                    }
+                }
+            }
+
+            // Calcular Aceleracion
+            let accel = {x: totalForce.x/iObj.mass, y: totalForce.y/iObj.mass, z: totalForce.z/iObj.mass};
+
+            //console.log('dTime: ', dTime);
+            //console.log('accel: ', accel);
+
+            let newVelocity = {
+                x: iObj.velocity.x + accel.x*dTime,
+                y: iObj.velocity.y + accel.y*dTime,
+                z: iObj.velocity.z + accel.z*dTime
+            };
+
+            //console.log('newVelocity: ', newVelocity);
+
+            // Mover
+            let newPosition = {
+                x: iObj.position.x + iObj.velocity.x*dTime + accel.x * Math.pow(dTime, 2) * 0.5,
+                y: iObj.position.y + iObj.velocity.y*dTime + accel.y * Math.pow(dTime, 2) * 0.5,
+                z: iObj.position.z + iObj.velocity.z*dTime + accel.z * Math.pow(dTime, 2) * 0.5,
+            };
+
+            //console.log('newPosition: ', iObj.position);
+
+            iObj.position = newPosition;
+            iObj.velocity = newVelocity;
+
+            iObj.updateFigure();
         }
 
-        requestAnimationFrame(animate);
+        requestAnimationFrame(this.timeFrame.bind(this));
     }
 
     private static makeSpace(): THREE.Line {
@@ -117,6 +191,12 @@ enum CollisionMode {
     overlap
 }
 
+enum EdgeMode {
+    bounce,
+    delete,
+    relocate
+}
+
 class Object {
     position: Vector;
     color: number | string;
@@ -128,7 +208,6 @@ class Object {
     velocity: Vector;
 
     figure: THREE.Mesh;
-    elasedTime: number = 0;
 
     constructor(position: Vector, color: number | string = 0xFFFFFF, radio=1, mass=1) {
         this.position = position;
@@ -167,10 +246,10 @@ class Object {
         return figure;
     }
 
-    private moveAxis(position: number, velocity: number, timeslap: number, axisMax: number): [number, number] {
+    private moveAxis(position: number, velocity: number, dTime: number, axisMax: number): [number, number] {
         let newPosition: number;
 
-        let module = velocity * timeslap;
+        let module = velocity * dTime;
 
         newPosition = position + module;
 
@@ -182,10 +261,7 @@ class Object {
         return [newPosition, velocity];
     }
 
-    move(updatedTime: number) {
-        let dTime = updatedTime - this.elasedTime;
-        this.elasedTime = updatedTime;
-
+    move(dTime: number) {
         [this.position.x, this.velocity.x] = this.moveAxis(this.position.x, this.velocity.x, dTime, spaceWidth);
         [this.position.y, this.velocity.y] = this.moveAxis(this.position.y, this.velocity.y, dTime, spaceHeight);
         [this.position.z, this.velocity.z] = this.moveAxis(this.position.z, this.velocity.z, dTime, spaceDepth);
@@ -193,7 +269,7 @@ class Object {
         this.updateFigure();
     }
 
-    private updateFigure(): void {
+    updateFigure(): void {
         this.figure.position.x = this.position.x;
         this.figure.position.y = this.position.y;
         this.figure.position.z = this.position.z;
